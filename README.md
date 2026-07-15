@@ -3,6 +3,8 @@
 A Home Assistant Lovelace card that shows the **newest videos from any media source**
 and plays them **inline** on your dashboard.
 
+![List view — newest recordings with thumbnails](docs/images/list-view.png)
+
 If you can see it in Home Assistant's **Media** browser, this card can show it:
 
 - 📹 NVR / camera recordings — **UniFi Protect**, **Frigate**, **Reolink**,
@@ -25,6 +27,14 @@ out of the box** — current and future ones.
 - **Built-in source browser**: click through the media tree in the card editor and
   pick your folder — no URI hand-editing
 - Signed thumbnails, empty state, readable inline errors, English/German UI
+
+**Inline playback** — tap a row, the clip plays right there:
+
+![Inline player](docs/images/inline-player.png)
+
+**Kiosk rotation** — clips play back-to-back with position indicator and tap-to-unmute:
+
+![Kiosk rotation player](docs/images/rotation-player.png)
 
 ## Installation
 
