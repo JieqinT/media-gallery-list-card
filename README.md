@@ -35,8 +35,22 @@ max_items: 3
 | `media_source` | string | **required** | A `media-source://…` URI of a browsable folder |
 | `max_items` | number | `3` | How many of the newest videos to list (1–20) |
 | `title` | string | – | Optional card heading |
+| `layout` | `list` \| `grid` | `list` | Rows with side thumbnails, or a tile grid |
+| `columns` | number | `3` | Tiles per row in grid layout (1–6, 16:9 tiles) |
+| `show_title` | boolean | `true` | Show video titles (list rows / grid captions) |
+| `autoplay_rotation` | boolean | `false` | Kiosk mode: play the newest N back-to-back, looping; re-fetches the list each loop. Starts muted (browser policy) with a tap-to-unmute pill |
+| `rotation_show_list` | boolean | `false` | With rotation: keep the tappable list below the player (tap = jump to that clip) |
 | `refresh_interval` | number | `0` | Auto-refresh the list every N seconds (0 = off) |
 | `reverse` | boolean | `false` | Flip item order for sources that sort oldest-first |
+
+### Kiosk example (wall tablet)
+
+```yaml
+type: custom:media-gallery-list-card
+media_source: media-source://unifiprotect/xxxxxxxxxxxx:browse:all:smart:recent:1
+max_items: 5
+autoplay_rotation: true
+```
 
 ### Finding your media-source URI
 

@@ -2,7 +2,9 @@ import { LitElement, html, css, nothing, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import { browseMedia, resolveMedia, signPathIfNeeded } from "./ha-api";
 import {
+  DEFAULT_COLUMNS,
   DEFAULT_MAX_ITEMS,
+  MAX_COLUMNS,
   MAX_MAX_ITEMS,
   type HomeAssistant,
   type MediaBrowseItem,
@@ -19,6 +21,8 @@ interface PlayingItem {
   title: string;
   url: string;
   mimeType: string;
+  /** Index in _items when part of a rotation, undefined for manual play. */
+  rotationIndex?: number;
 }
 
 const STRINGS: Record<string, Record<string, string>> = {
@@ -28,6 +32,8 @@ const STRINGS: Record<string, Record<string, string>> = {
     load_error: "Could not load media list",
     play_error: "Could not play this item",
     close: "Close",
+    unmute: "Tap to unmute",
+    mute: "Mute",
   },
   de: {
     no_media_source: "„media_source“ auf eine media-source:// URI setzen",
@@ -35,6 +41,8 @@ const STRINGS: Record<string, Record<string, string>> = {
     load_error: "Medienliste konnte nicht geladen werden",
     play_error: "Dieses Element konnte nicht abgespielt werden",
     close: "Schließen",
+    unmute: "Zum Entstummen tippen",
+    mute: "Stumm",
   },
 };
 
@@ -43,6 +51,8 @@ class MediaGalleryListCard extends LitElement {
   private _config?: MediaGalleryListCardConfig;
   private _refreshTimer?: number;
   private _loadedFor?: string;
+  private _rotationErrorStreak = 0;
+  private _rotationMuted = true;
 
   @state() private _items: ListedItem[] = [];
   @state() private _loading = false;
@@ -60,9 +70,17 @@ class MediaGalleryListCard extends LitElement {
     if (typeof maxItems !== "number" || maxItems < 1 || maxItems > MAX_MAX_ITEMS) {
       throw new Error(`max_items must be a number between 1 and ${MAX_MAX_ITEMS}`);
     }
+    if (config.layout !== undefined && !["list", "grid"].includes(config.layout)) {
+      throw new Error('layout must be "list" or "grid"');
+    }
+    const columns = config.columns ?? DEFAULT_COLUMNS;
+    if (typeof columns !== "number" || columns < 1 || columns > MAX_COLUMNS) {
+      throw new Error(`columns must be a number between 1 and ${MAX_COLUMNS}`);
+    }
     this._config = config;
     this._loadedFor = undefined;
     this._playing = undefined;
+    this._rotationErrorStreak = 0;
     this._scheduleRefreshTimer();
     this._maybeLoad();
   }
@@ -74,7 +92,6 @@ class MediaGalleryListCard extends LitElement {
 
   public connectedCallback(): void {
     super.connectedCallback();
-    // Re-fetch when the card returns to view (tab switch, etc.).
     this._loadedFor = undefined;
     this._scheduleRefreshTimer();
     this._maybeLoad();
@@ -86,6 +103,7 @@ class MediaGalleryListCard extends LitElement {
       window.clearInterval(this._refreshTimer);
       this._refreshTimer = undefined;
     }
+    this._playing = undefined;
   }
 
   public getCardSize(): number {
@@ -101,9 +119,16 @@ class MediaGalleryListCard extends LitElement {
   }
 
   private _t(key: string): string {
-    const lang =
-      this._hass?.locale?.language ?? this._hass?.language ?? "en";
+    const lang = this._hass?.locale?.language ?? this._hass?.language ?? "en";
     return STRINGS[lang.split("-")[0]]?.[key] ?? STRINGS.en[key] ?? key;
+  }
+
+  private get _showTitle(): boolean {
+    return this._config?.show_title !== false;
+  }
+
+  private get _rotationEnabled(): boolean {
+    return this._config?.autoplay_rotation === true;
   }
 
   private _scheduleRefreshTimer(): void {
@@ -154,6 +179,10 @@ class MediaGalleryListCard extends LitElement {
         })
       );
       this._items = items;
+      // Kick off (or continue) rotation once we have items.
+      if (this._rotationEnabled && items.length && this._playing === undefined) {
+        this._playRotationIndex(0);
+      }
     } catch (err) {
       this._error = `${this._t("load_error")}: ${
         err instanceof Error ? err.message : String(err)
@@ -164,23 +193,70 @@ class MediaGalleryListCard extends LitElement {
     }
   }
 
-  private async _play(listed: ListedItem): Promise<void> {
-    if (!this._hass) return;
+  private async _resolveFor(listed: ListedItem): Promise<PlayingItem | undefined> {
+    if (!this._hass) return undefined;
+    const resolved = await resolveMedia(this._hass, listed.item.media_content_id);
+    const url = await signPathIfNeeded(this._hass, resolved.url);
+    return { title: listed.item.title, url, mimeType: resolved.mime_type };
+  }
+
+  private async _play(listed: ListedItem, rotationIndex?: number): Promise<void> {
     try {
-      const resolved = await resolveMedia(
-        this._hass,
-        listed.item.media_content_id
-      );
-      const url = await signPathIfNeeded(this._hass, resolved.url);
-      this._playing = {
-        title: listed.item.title,
-        url,
-        mimeType: resolved.mime_type,
-      };
+      const playing = await this._resolveFor(listed);
+      if (!playing) return;
+      playing.rotationIndex = rotationIndex;
+      this._playing = playing;
+      this._rotationErrorStreak = 0;
     } catch (err) {
-      this._error = `${this._t("play_error")}: ${
-        err instanceof Error ? err.message : String(err)
-      }`;
+      if (rotationIndex !== undefined) {
+        this._rotationAdvance(rotationIndex, true);
+      } else {
+        this._error = `${this._t("play_error")}: ${
+          err instanceof Error ? err.message : String(err)
+        }`;
+      }
+    }
+  }
+
+  private _playRotationIndex(index: number): void {
+    const listed = this._items[index];
+    if (!listed) return;
+    void this._play(listed, index);
+  }
+
+  /** Move rotation to the next clip; wraps by reloading the list. */
+  private _rotationAdvance(fromIndex: number, failed = false): void {
+    if (!this._rotationEnabled || !this.isConnected) return;
+    if (failed) {
+      this._rotationErrorStreak += 1;
+      if (this._rotationErrorStreak >= Math.max(1, this._items.length)) {
+        this._playing = undefined;
+        this._error = this._t("play_error");
+        return;
+      }
+    }
+    const next = fromIndex + 1;
+    if (next < this._items.length) {
+      this._playRotationIndex(next);
+    } else {
+      // End of playlist: refresh the list so new detections join, then restart.
+      this._playing = undefined;
+      this._loadedFor = undefined;
+      void this._maybeLoad();
+    }
+  }
+
+  private _onVideoEnded(): void {
+    const idx = this._playing?.rotationIndex;
+    if (idx !== undefined) {
+      this._rotationAdvance(idx);
+    }
+  }
+
+  private _onVideoError(): void {
+    const idx = this._playing?.rotationIndex;
+    if (idx !== undefined) {
+      this._rotationAdvance(idx, true);
     }
   }
 
@@ -188,7 +264,15 @@ class MediaGalleryListCard extends LitElement {
     this._playing = undefined;
   }
 
+  private _toggleMute(): void {
+    this._rotationMuted = !this._rotationMuted;
+    const video = this.shadowRoot?.querySelector("video");
+    if (video) video.muted = this._rotationMuted;
+    this.requestUpdate();
+  }
+
   private _renderPlayer(playing: PlayingItem): TemplateResult {
+    const rotating = playing.rotationIndex !== undefined;
     const isHls =
       playing.mimeType === "application/x-mpegURL" ||
       playing.mimeType === "application/vnd.apple.mpegurl";
@@ -196,47 +280,102 @@ class MediaGalleryListCard extends LitElement {
     return html`
       <div class="player">
         <div class="player-bar">
-          <span class="player-title">${playing.title}</span>
-          <button
-            class="close"
-            aria-label=${this._t("close")}
-            @click=${this._closePlayer}
-          >
-            ✕
-          </button>
+          <span class="player-title">
+            ${playing.title}${rotating
+              ? html` <span class="rotation-pos"
+                  >${playing.rotationIndex! + 1}/${this._items.length}</span
+                >`
+              : nothing}
+          </span>
+          <span class="player-actions">
+            ${rotating
+              ? html`<button class="pill" @click=${this._toggleMute}>
+                  ${this._rotationMuted ? `🔇 ${this._t("unmute")}` : `🔊 ${this._t("mute")}`}
+                </button>`
+              : nothing}
+            ${!rotating
+              ? html`<button
+                  class="close"
+                  aria-label=${this._t("close")}
+                  @click=${this._closePlayer}
+                >
+                  ✕
+                </button>`
+              : nothing}
+          </span>
         </div>
         ${haHlsAvailable
-          ? // ha-hls-player is HA's own HLS wrapper; falls back below if absent.
-            html`<ha-hls-player
+          ? html`<ha-hls-player
               .hass=${this._hass}
               .url=${playing.url}
               controls
               autoplay
               playsinline
+              .muted=${rotating ? this._rotationMuted : false}
             ></ha-hls-player>`
           : html`<video
               src=${playing.url}
               controls
               autoplay
               playsinline
+              .muted=${rotating ? this._rotationMuted : false}
+              @ended=${this._onVideoEnded}
+              @error=${this._onVideoError}
             ></video>`}
       </div>
     `;
   }
 
-  private _renderRow(listed: ListedItem): TemplateResult {
+  private _renderRow(listed: ListedItem, index: number): TemplateResult {
     return html`
-      <button class="row" @click=${() => this._play(listed)}>
+      <button class="row" @click=${() => this._onItemTap(listed, index)}>
         ${listed.thumbnailUrl
           ? html`<img class="thumb" src=${listed.thumbnailUrl} alt="" />`
           : html`<div class="thumb placeholder" aria-hidden="true">▶</div>`}
-        <span class="row-title">${listed.item.title}</span>
+        ${this._showTitle
+          ? html`<span class="row-title">${listed.item.title}</span>`
+          : nothing}
       </button>
+    `;
+  }
+
+  private _renderTile(listed: ListedItem, index: number): TemplateResult {
+    return html`
+      <button class="tile" @click=${() => this._onItemTap(listed, index)}>
+        ${listed.thumbnailUrl
+          ? html`<img class="tile-img" src=${listed.thumbnailUrl} alt="" />`
+          : html`<div class="tile-img placeholder" aria-hidden="true">▶</div>`}
+        ${this._showTitle
+          ? html`<span class="tile-caption">${listed.item.title}</span>`
+          : nothing}
+      </button>
+    `;
+  }
+
+  private _onItemTap(listed: ListedItem, index: number): void {
+    // In rotation mode a tap jumps the rotation to that clip;
+    // otherwise it is a plain manual play.
+    void this._play(listed, this._rotationEnabled ? index : undefined);
+  }
+
+  private _renderItems(): TemplateResult {
+    if ((this._config?.layout ?? "list") === "grid") {
+      const columns = this._config?.columns ?? DEFAULT_COLUMNS;
+      return html`
+        <div class="grid" style="grid-template-columns: repeat(${columns}, 1fr)">
+          ${this._items.map((i, idx) => this._renderTile(i, idx))}
+        </div>
+      `;
+    }
+    return html`
+      <div class="rows">${this._items.map((i, idx) => this._renderRow(i, idx))}</div>
     `;
   }
 
   protected render(): TemplateResult | typeof nothing {
     if (!this._config) return nothing;
+    const showList =
+      !this._rotationEnabled || this._config.rotation_show_list === true;
     return html`
       <ha-card>
         ${this._config.title
@@ -256,7 +395,7 @@ class MediaGalleryListCard extends LitElement {
           ${!this._loading && !this._error && !this._items.length
             ? html`<div class="empty">${this._t("no_items")}</div>`
             : nothing}
-          <div class="rows">${this._items.map((i) => this._renderRow(i))}</div>
+          ${showList ? this._renderItems() : nothing}
         </div>
       </ha-card>
     `;
@@ -306,7 +445,7 @@ class MediaGalleryListCard extends LitElement {
       object-fit: cover;
       background: var(--secondary-background-color);
     }
-    .thumb.placeholder {
+    .placeholder {
       display: flex;
       align-items: center;
       justify-content: center;
@@ -317,6 +456,49 @@ class MediaGalleryListCard extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .grid {
+      display: grid;
+      gap: 8px;
+    }
+    .tile {
+      position: relative;
+      padding: 0;
+      border: none;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      background: var(--secondary-background-color);
+      aspect-ratio: 16 / 9;
+      font: inherit;
+    }
+    .tile-img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .tile-img.placeholder {
+      position: absolute;
+    }
+    .tile-caption {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 12px 8px 6px;
+      font-size: 12px;
+      color: #fff;
+      text-align: left;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+    }
+    .tile:hover .tile-img,
+    .tile:focus-visible .tile-img {
+      filter: brightness(1.1);
     }
     .player {
       margin-bottom: 8px;
@@ -333,6 +515,27 @@ class MediaGalleryListCard extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
       font-weight: 500;
+      min-width: 0;
+    }
+    .rotation-pos {
+      color: var(--secondary-text-color);
+      font-weight: 400;
+      font-size: 0.9em;
+    }
+    .player-actions {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .pill {
+      border: none;
+      border-radius: 12px;
+      background: var(--secondary-background-color);
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 4px 10px;
     }
     .close {
       border: none;
@@ -391,7 +594,7 @@ window.customCards.push({
   type: "media-gallery-list-card",
   name: "Media Gallery List Card",
   description:
-    "Newest videos from any media source (UniFi Protect, Synology, local media, ...) with inline playback.",
+    "Newest videos from any media source (UniFi Protect, Synology, local media, ...) with inline playback, grid/list layouts, and kiosk rotation.",
   preview: false,
   documentationURL:
     "https://github.com/stefanschaedeli/media-gallery-list-card",

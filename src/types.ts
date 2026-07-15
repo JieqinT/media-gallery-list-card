@@ -31,7 +31,14 @@ export interface MediaGalleryListCardConfig {
   title?: string;
   refresh_interval?: number;
   reverse?: boolean;
+  layout?: "list" | "grid";
+  columns?: number;
+  show_title?: boolean;
+  autoplay_rotation?: boolean;
+  rotation_show_list?: boolean;
 }
 
 export const DEFAULT_MAX_ITEMS = 3;
 export const MAX_MAX_ITEMS = 20;
+export const DEFAULT_COLUMNS = 3;
+export const MAX_COLUMNS = 6;
