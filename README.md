@@ -54,11 +54,15 @@ autoplay_rotation: true
 
 ### Finding your media-source URI
 
-Open **Media** in the Home Assistant sidebar and navigate to the folder you want
-(e.g. UniFi Protect → your console → All Cameras → Smart Detections → Last 24 hours).
-The browser URL contains the URI, URL-encoded — the part starting with
-`media-source%3A%2F%2F…`. Decode it (`%3A` → `:`, `%2F` → `/`) and use it as
-`media_source`.
+**Use the built-in browser (v0.3+):** open the card's visual editor and click
+**📂 Browse** next to the media source field. Click through the tree (e.g.
+UniFi Protect → your console → All Cameras → Smart Detections → Last 24 hours)
+and hit **✓ Use this folder** at the level you want — the URI is filled in for you.
+
+**Manual fallback:** open **Media** in the Home Assistant sidebar and navigate to
+the folder you want. The browser URL contains the URI, URL-encoded — the part
+starting with `media-source%3A%2F%2F…`. Decode it (`%3A` → `:`, `%2F` → `/`) and
+use it as `media_source`.
 
 Example for UniFi Protect "recent smart detections, last 1 day, all cameras":
 

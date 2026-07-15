@@ -1,10 +1,10 @@
-import { LitElement, html, nothing, type TemplateResult } from "lit";
+import { LitElement, html, nothing, css, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import type { HomeAssistant, MediaGalleryListCardConfig } from "./types";
 import { MAX_COLUMNS, MAX_MAX_ITEMS } from "./types";
+import "./source-picker";
 
 const SCHEMA = [
-  { name: "media_source", required: true, selector: { text: {} } },
   { name: "title", selector: { text: {} } },
   {
     name: "max_items",
@@ -37,7 +37,6 @@ const SCHEMA = [
 ];
 
 const LABELS: Record<string, string> = {
-  media_source: "Media source URI (media-source://…)",
   title: "Title (optional)",
   max_items: "Number of videos to show",
   layout: "Layout",
@@ -52,13 +51,14 @@ const LABELS: Record<string, string> = {
 class MediaGalleryListCardEditor extends LitElement {
   public hass?: HomeAssistant;
   @state() private _config?: MediaGalleryListCardConfig;
+  @state() private _browsing = false;
 
   public setConfig(config: MediaGalleryListCardConfig): void {
     this._config = config;
   }
 
-  private _valueChanged(ev: CustomEvent): void {
-    const config = { ...this._config, ...ev.detail.value };
+  private _emitConfig(config: MediaGalleryListCardConfig): void {
+    this._config = config;
     this.dispatchEvent(
       new CustomEvent("config-changed", {
         detail: { config },
@@ -68,18 +68,104 @@ class MediaGalleryListCardEditor extends LitElement {
     );
   }
 
+  private _formChanged(ev: CustomEvent): void {
+    ev.stopPropagation();
+    this._emitConfig({ ...this._config, ...ev.detail.value });
+  }
+
+  private _sourceTyped(ev: Event): void {
+    const value = (ev.target as HTMLInputElement).value;
+    this._emitConfig({ ...this._config!, media_source: value });
+  }
+
+  private _sourceSelected(ev: CustomEvent): void {
+    ev.stopPropagation();
+    this._browsing = false;
+    this._emitConfig({
+      ...this._config!,
+      media_source: ev.detail.media_content_id,
+    });
+  }
+
   protected render(): TemplateResult | typeof nothing {
     if (!this.hass || !this._config) return nothing;
     return html`
+      <div class="source">
+        <label class="source-label">Media source URI (media-source://…)</label>
+        <div class="source-row">
+          <input
+            class="source-input"
+            type="text"
+            .value=${this._config.media_source ?? ""}
+            placeholder="media-source://…"
+            @change=${this._sourceTyped}
+          />
+          <button
+            class="browse ${this._browsing ? "active" : ""}"
+            @click=${() => (this._browsing = !this._browsing)}
+          >
+            ${this._browsing ? "▲" : "📂"} Browse
+          </button>
+        </div>
+        ${this._browsing
+          ? html`<media-gallery-source-picker
+              .hass=${this.hass}
+              @source-selected=${this._sourceSelected}
+            ></media-gallery-source-picker>`
+          : nothing}
+      </div>
       <ha-form
         .hass=${this.hass}
         .data=${this._config}
         .schema=${SCHEMA}
         .computeLabel=${(s: { name: string }) => LABELS[s.name] ?? s.name}
-        @value-changed=${this._valueChanged}
+        @value-changed=${this._formChanged}
       ></ha-form>
     `;
   }
+
+  static styles = css`
+    .source {
+      margin-bottom: 16px;
+    }
+    .source-label {
+      display: block;
+      font-size: 12px;
+      color: var(--secondary-text-color);
+      margin-bottom: 4px;
+    }
+    .source-row {
+      display: flex;
+      gap: 8px;
+    }
+    .source-input {
+      flex: 1;
+      min-width: 0;
+      padding: 10px 8px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 6px;
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      font: inherit;
+      font-size: 14px;
+    }
+    .browse {
+      flex-shrink: 0;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 6px;
+      background: var(--secondary-background-color);
+      color: var(--primary-text-color);
+      cursor: pointer;
+      padding: 0 12px;
+      font: inherit;
+      font-size: 14px;
+    }
+    .browse.active {
+      background: var(--primary-color);
+      color: var(--text-primary-color, #fff);
+      border-color: var(--primary-color);
+    }
+  `;
 }
 
 customElements.define(

@@ -1,13 +1,15 @@
 import type { HomeAssistant, MediaBrowseItem, ResolvedMedia } from "./types";
 
+/** Browse a media-source folder; omit `mediaContentId` for the provider root. */
 export function browseMedia(
   hass: HomeAssistant,
-  mediaContentId: string
+  mediaContentId?: string
 ): Promise<MediaBrowseItem> {
-  return hass.callWS<MediaBrowseItem>({
-    type: "media_source/browse_media",
-    media_content_id: mediaContentId,
-  });
+  const msg: Record<string, unknown> = { type: "media_source/browse_media" };
+  if (mediaContentId !== undefined) {
+    msg.media_content_id = mediaContentId;
+  }
+  return hass.callWS<MediaBrowseItem>(msg);
 }
 
 export function resolveMedia(
@@ -24,7 +26,7 @@ const signedPathCache = new Map<string, string>();
 
 /**
  * Media/thumbnail paths returned by browse_media are often relative,
- * authenticated API paths. Sign them so <img>/<video> tags can load them.
+ * authenticated API paths. Sign them so image/video tags can load them.
  * Absolute URLs and data URIs pass through untouched.
  */
 export async function signPathIfNeeded(
