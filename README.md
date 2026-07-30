@@ -81,7 +81,8 @@ max_items: 3
 | `player_aspect_ratio` | `auto` \| `16:9` \| `4:3` \| `1:1` | `auto` | Inline player: `auto` keeps the video's native ratio; a fixed ratio crops the video to fill the frame (HLS via `ha-hls-player` is clipped to the frame rather than cover-cropped) |
 | `show_title` | boolean | `true` | Show video titles (list rows / grid captions) |
 | `title_format` | string | – | Re-format the date/time in item titles, e.g. `DD.MM.YYYY HH:mm` — see [Title format](#title-format). Empty = show the provider's raw title |
-| `autoplay_rotation` | boolean | `false` | Kiosk mode: play the newest N back-to-back, looping; re-fetches the list each loop. Starts muted (browser policy) with a tap-to-unmute pill |
+| `autoplay_rotation` | boolean | `false` | Kiosk mode: play the newest N back-to-back, looping; re-fetches the list each loop. Starts muted (browser policy) with a tap-to-unmute pill. The next clip is preloaded while the current one plays — see [Preloading](#preloading) |
+| `preload` | boolean | `true` | During rotation, fetch the next clip in the background while the current one plays, for gap-free advancing. Set `false` to save bandwidth on metered links |
 | `rotation_show_list` | boolean | `false` | With rotation: keep the tappable list below the player (tap = jump to that clip) |
 | `refresh_interval` | number | `0` | Auto-refresh the list every N seconds (0 = off) |
 | `reverse` | boolean | `false` | Flip item order for sources that sort oldest-first |
@@ -155,6 +156,28 @@ For every listed item the card runs three steps:
 
 The formatted title is used everywhere the title appears: list rows, grid tile
 captions, and the player bar.
+
+### Preloading
+
+On slow connections, rotation used to pause between clips: each advance first asked
+Home Assistant to resolve and sign the next clip's URL, and only then started the
+download. Since v0.5.0 the card downloads the **next clip into memory while the
+current one plays**, so the rotation advances with no gap — including the wrap-around
+back to the newest clip.
+
+Details worth knowing:
+
+- Exactly **one clip** is held ahead — memory cost is a single clip, and bandwidth
+  is only spent on clips that are about to play.
+- If the preload isn't finished (or failed) when the rotation advances, the card
+  transparently falls back to the normal load-on-demand path — worst case is the
+  old behavior, never an error.
+- **HLS streams are never preloaded** (they play through Home Assistant's own
+  streaming player, which can't consume a prefetched file) — they behave exactly
+  as before.
+- Manual taps outside rotation are *not* preloaded on purpose: downloading clips
+  you may never watch is the wrong trade on slow or metered links.
+- `preload: false` restores the pre-0.5.0 behavior entirely.
 
 ## Examples
 

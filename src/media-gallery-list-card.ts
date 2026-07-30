@@ -10,12 +10,14 @@ import {
   MAX_MAX_ITEMS,
   aspectRatioCss,
   aspectRatioNumber,
+  isHlsMime,
   type AspectRatio,
   type HomeAssistant,
   type MediaBrowseItem,
   type MediaGalleryListCardConfig,
 } from "./types";
 import { formatItemTitle } from "./title-format";
+import { ClipPreloader } from "./preloader";
 import "./editor";
 
 interface ListedItem {
@@ -60,6 +62,7 @@ class MediaGalleryListCard extends LitElement {
   private _loadedFor?: string;
   private _rotationErrorStreak = 0;
   private _rotationMuted = true;
+  private _preloader = new ClipPreloader();
 
   @state() private _items: ListedItem[] = [];
   @state() private _loading = false;
@@ -105,6 +108,10 @@ class MediaGalleryListCard extends LitElement {
     ) {
       throw new Error("title_format must be a string");
     }
+    if (config.preload !== undefined && typeof config.preload !== "boolean") {
+      throw new Error("preload must be a boolean");
+    }
+    this._preloader.dispose();
     this._config = config;
     this._loadedFor = undefined;
     this._playing = undefined;
@@ -132,6 +139,7 @@ class MediaGalleryListCard extends LitElement {
       this._refreshTimer = undefined;
     }
     this._playing = undefined;
+    this._preloader.dispose();
   }
 
   public getCardSize(): number {
@@ -157,6 +165,10 @@ class MediaGalleryListCard extends LitElement {
 
   private get _rotationEnabled(): boolean {
     return this._config?.autoplay_rotation === true;
+  }
+
+  private get _preloadEnabled(): boolean {
+    return this._config?.preload !== false;
   }
 
   private _scheduleRefreshTimer(): void {
@@ -238,11 +250,15 @@ class MediaGalleryListCard extends LitElement {
 
   private async _play(listed: ListedItem, rotationIndex?: number): Promise<void> {
     try {
-      const playing = await this._resolveFor(listed);
+      const pre = await this._preloader.take(listed.item.media_content_id);
+      const playing: PlayingItem | undefined = pre
+        ? { title: listed.displayTitle, url: pre.url, mimeType: pre.mimeType }
+        : await this._resolveFor(listed);
       if (!playing) return;
       playing.rotationIndex = rotationIndex;
       this._playing = playing;
       this._rotationErrorStreak = 0;
+      this._preloadNext(rotationIndex);
     } catch (err) {
       if (rotationIndex !== undefined) {
         this._rotationAdvance(rotationIndex, true);
@@ -252,6 +268,21 @@ class MediaGalleryListCard extends LitElement {
         }`;
       }
     }
+  }
+
+  /** Fetch the next rotation clip in the background while the current plays. */
+  private _preloadNext(rotationIndex?: number): void {
+    if (
+      !this._preloadEnabled ||
+      !this._rotationEnabled ||
+      rotationIndex === undefined ||
+      !this._hass ||
+      !this._items.length
+    ) {
+      return;
+    }
+    const next = this._items[rotationIndex + 1] ?? this._items[0];
+    this._preloader.start(this._hass, next.item.media_content_id);
   }
 
   private _playRotationIndex(index: number): void {
@@ -298,6 +329,7 @@ class MediaGalleryListCard extends LitElement {
 
   private _closePlayer(): void {
     this._playing = undefined;
+    this._preloader.dispose();
   }
 
   private _toggleMute(): void {
@@ -309,10 +341,8 @@ class MediaGalleryListCard extends LitElement {
 
   private _renderPlayer(playing: PlayingItem): TemplateResult {
     const rotating = playing.rotationIndex !== undefined;
-    const isHls =
-      playing.mimeType === "application/x-mpegURL" ||
-      playing.mimeType === "application/vnd.apple.mpegurl";
-    const haHlsAvailable = isHls && !!customElements.get("ha-hls-player");
+    const haHlsAvailable =
+      isHlsMime(playing.mimeType) && !!customElements.get("ha-hls-player");
     const playerRatio = this._config?.player_aspect_ratio ?? "auto";
     const fixed = playerRatio !== "auto";
     return html`

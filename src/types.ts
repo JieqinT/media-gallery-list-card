@@ -42,6 +42,7 @@ export interface MediaGalleryListCardConfig {
   title_format?: string;
   autoplay_rotation?: boolean;
   rotation_show_list?: boolean;
+  preload?: boolean;
 }
 
 export const DEFAULT_MAX_ITEMS = 3;
@@ -60,4 +61,11 @@ export function aspectRatioCss(ratio: AspectRatio): string {
 export function aspectRatioNumber(ratio: AspectRatio): number {
   const [w, h] = ratio.split(":").map(Number);
   return w / h;
+}
+
+/** HLS playlists play via ha-hls-player and cannot be preloaded as a Blob. */
+export function isHlsMime(mime: string): boolean {
+  return (
+    mime === "application/x-mpegURL" || mime === "application/vnd.apple.mpegurl"
+  );
 }

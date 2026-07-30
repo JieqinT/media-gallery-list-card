@@ -59,6 +59,7 @@ const SCHEMA = [
   { name: "show_title", selector: { boolean: {} } },
   { name: "title_format", selector: { text: {} } },
   { name: "autoplay_rotation", selector: { boolean: {} } },
+  { name: "preload", selector: { boolean: {} } },
   { name: "rotation_show_list", selector: { boolean: {} } },
   {
     name: "refresh_interval",
@@ -78,6 +79,7 @@ const LABELS: Record<string, string> = {
   show_title: "Show video titles",
   title_format: "Title date format (e.g. DD.MM.YYYY HH:mm — empty = raw title)",
   autoplay_rotation: "Auto-playback rotation (kiosk mode, starts muted)",
+  preload: "Preload next clip during rotation (smoother playback)",
   rotation_show_list: "Show list below rotation player",
   refresh_interval: "Auto-refresh interval (seconds, 0 = off)",
   reverse: "Reverse order (for oldest-first sources)",
@@ -151,7 +153,7 @@ class MediaGalleryListCardEditor extends LitElement {
       </div>
       <ha-form
         .hass=${this.hass}
-        .data=${this._config}
+        .data=${{ show_title: true, preload: true, ...this._config }}
         .schema=${SCHEMA}
         .computeLabel=${(s: { name: string }) => LABELS[s.name] ?? s.name}
         @value-changed=${this._formChanged}
