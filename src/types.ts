@@ -24,6 +24,8 @@ export interface ResolvedMedia {
   mime_type: string;
 }
 
+export type AspectRatio = "16:9" | "4:3" | "1:1";
+
 export interface MediaGalleryListCardConfig {
   type: string;
   media_source: string;
@@ -33,7 +35,11 @@ export interface MediaGalleryListCardConfig {
   reverse?: boolean;
   layout?: "list" | "grid";
   columns?: number;
+  grid_aspect_ratio?: AspectRatio;
+  list_aspect_ratio?: AspectRatio;
+  player_aspect_ratio?: "auto" | AspectRatio;
   show_title?: boolean;
+  title_format?: string;
   autoplay_rotation?: boolean;
   rotation_show_list?: boolean;
 }
@@ -42,3 +48,16 @@ export const DEFAULT_MAX_ITEMS = 3;
 export const MAX_MAX_ITEMS = 20;
 export const DEFAULT_COLUMNS = 3;
 export const MAX_COLUMNS = 6;
+export const ASPECT_RATIOS: readonly AspectRatio[] = ["16:9", "4:3", "1:1"];
+export const DEFAULT_ASPECT_RATIO: AspectRatio = "16:9";
+
+/** "16:9" → "16 / 9" for use as a CSS aspect-ratio value. */
+export function aspectRatioCss(ratio: AspectRatio): string {
+  return ratio.replace(":", " / ");
+}
+
+/** "16:9" → 16/9 as a number (for height calculations). */
+export function aspectRatioNumber(ratio: AspectRatio): number {
+  const [w, h] = ratio.split(":").map(Number);
+  return w / h;
+}

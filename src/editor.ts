@@ -1,7 +1,7 @@
 import { LitElement, html, nothing, css, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import type { HomeAssistant, MediaGalleryListCardConfig } from "./types";
-import { MAX_COLUMNS, MAX_MAX_ITEMS } from "./types";
+import { ASPECT_RATIOS, MAX_COLUMNS, MAX_MAX_ITEMS } from "./types";
 import "./source-picker";
 
 const SCHEMA = [
@@ -26,7 +26,38 @@ const SCHEMA = [
     name: "columns",
     selector: { number: { min: 1, max: MAX_COLUMNS, mode: "box" } },
   },
+  {
+    name: "grid_aspect_ratio",
+    selector: {
+      select: {
+        mode: "dropdown",
+        options: ASPECT_RATIOS.map((r) => ({ value: r, label: r })),
+      },
+    },
+  },
+  {
+    name: "list_aspect_ratio",
+    selector: {
+      select: {
+        mode: "dropdown",
+        options: ASPECT_RATIOS.map((r) => ({ value: r, label: r })),
+      },
+    },
+  },
+  {
+    name: "player_aspect_ratio",
+    selector: {
+      select: {
+        mode: "dropdown",
+        options: [
+          { value: "auto", label: "Auto (native)" },
+          ...ASPECT_RATIOS.map((r) => ({ value: r, label: r })),
+        ],
+      },
+    },
+  },
   { name: "show_title", selector: { boolean: {} } },
+  { name: "title_format", selector: { text: {} } },
   { name: "autoplay_rotation", selector: { boolean: {} } },
   { name: "rotation_show_list", selector: { boolean: {} } },
   {
@@ -41,7 +72,11 @@ const LABELS: Record<string, string> = {
   max_items: "Number of videos to show",
   layout: "Layout",
   columns: "Grid columns (grid layout only)",
+  grid_aspect_ratio: "Grid tile aspect ratio",
+  list_aspect_ratio: "List thumbnail aspect ratio",
+  player_aspect_ratio: "Player aspect ratio (auto = native video size)",
   show_title: "Show video titles",
+  title_format: "Title date format (e.g. DD.MM.YYYY HH:mm — empty = raw title)",
   autoplay_rotation: "Auto-playback rotation (kiosk mode, starts muted)",
   rotation_show_list: "Show list below rotation player",
   refresh_interval: "Auto-refresh interval (seconds, 0 = off)",

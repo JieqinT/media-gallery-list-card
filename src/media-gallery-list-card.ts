@@ -2,19 +2,26 @@ import { LitElement, html, css, nothing, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import { browseMedia, resolveMedia, signPathIfNeeded } from "./ha-api";
 import {
+  ASPECT_RATIOS,
+  DEFAULT_ASPECT_RATIO,
   DEFAULT_COLUMNS,
   DEFAULT_MAX_ITEMS,
   MAX_COLUMNS,
   MAX_MAX_ITEMS,
+  aspectRatioCss,
+  aspectRatioNumber,
+  type AspectRatio,
   type HomeAssistant,
   type MediaBrowseItem,
   type MediaGalleryListCardConfig,
 } from "./types";
+import { formatItemTitle } from "./title-format";
 import "./editor";
 
 interface ListedItem {
   item: MediaBrowseItem;
   thumbnailUrl?: string;
+  displayTitle: string;
 }
 
 interface PlayingItem {
@@ -76,6 +83,27 @@ class MediaGalleryListCard extends LitElement {
     const columns = config.columns ?? DEFAULT_COLUMNS;
     if (typeof columns !== "number" || columns < 1 || columns > MAX_COLUMNS) {
       throw new Error(`columns must be a number between 1 and ${MAX_COLUMNS}`);
+    }
+    for (const key of ["grid_aspect_ratio", "list_aspect_ratio"] as const) {
+      const value = config[key];
+      if (value !== undefined && !ASPECT_RATIOS.includes(value)) {
+        throw new Error(`${key} must be one of "16:9", "4:3", "1:1"`);
+      }
+    }
+    if (
+      config.player_aspect_ratio !== undefined &&
+      config.player_aspect_ratio !== "auto" &&
+      !ASPECT_RATIOS.includes(config.player_aspect_ratio)
+    ) {
+      throw new Error(
+        'player_aspect_ratio must be one of "auto", "16:9", "4:3", "1:1"'
+      );
+    }
+    if (
+      config.title_format !== undefined &&
+      typeof config.title_format !== "string"
+    ) {
+      throw new Error("title_format must be a string");
     }
     this._config = config;
     this._loadedFor = undefined;
@@ -175,7 +203,15 @@ class MediaGalleryListCard extends LitElement {
               thumbnailUrl = undefined;
             }
           }
-          return { item, thumbnailUrl };
+          return {
+            item,
+            thumbnailUrl,
+            displayTitle: formatItemTitle(
+              item.title,
+              item.media_content_id,
+              this._config?.title_format
+            ),
+          };
         })
       );
       this._items = items;
@@ -197,7 +233,7 @@ class MediaGalleryListCard extends LitElement {
     if (!this._hass) return undefined;
     const resolved = await resolveMedia(this._hass, listed.item.media_content_id);
     const url = await signPathIfNeeded(this._hass, resolved.url);
-    return { title: listed.item.title, url, mimeType: resolved.mime_type };
+    return { title: listed.displayTitle, url, mimeType: resolved.mime_type };
   }
 
   private async _play(listed: ListedItem, rotationIndex?: number): Promise<void> {
@@ -277,6 +313,8 @@ class MediaGalleryListCard extends LitElement {
       playing.mimeType === "application/x-mpegURL" ||
       playing.mimeType === "application/vnd.apple.mpegurl";
     const haHlsAvailable = isHls && !!customElements.get("ha-hls-player");
+    const playerRatio = this._config?.player_aspect_ratio ?? "auto";
+    const fixed = playerRatio !== "auto";
     return html`
       <div class="player">
         <div class="player-bar">
@@ -304,24 +342,31 @@ class MediaGalleryListCard extends LitElement {
               : nothing}
           </span>
         </div>
-        ${haHlsAvailable
-          ? html`<ha-hls-player
-              .hass=${this._hass}
-              .url=${playing.url}
-              controls
-              autoplay
-              playsinline
-              .muted=${rotating ? this._rotationMuted : false}
-            ></ha-hls-player>`
-          : html`<video
-              src=${playing.url}
-              controls
-              autoplay
-              playsinline
-              .muted=${rotating ? this._rotationMuted : false}
-              @ended=${this._onVideoEnded}
-              @error=${this._onVideoError}
-            ></video>`}
+        <div
+          class="player-frame${fixed ? " fixed" : ""}"
+          style=${fixed
+            ? `aspect-ratio: ${aspectRatioCss(playerRatio as AspectRatio)}`
+            : nothing}
+        >
+          ${haHlsAvailable
+            ? html`<ha-hls-player
+                .hass=${this._hass}
+                .url=${playing.url}
+                controls
+                autoplay
+                playsinline
+                .muted=${rotating ? this._rotationMuted : false}
+              ></ha-hls-player>`
+            : html`<video
+                src=${playing.url}
+                controls
+                autoplay
+                playsinline
+                .muted=${rotating ? this._rotationMuted : false}
+                @ended=${this._onVideoEnded}
+                @error=${this._onVideoError}
+              ></video>`}
+        </div>
       </div>
     `;
   }
@@ -333,7 +378,7 @@ class MediaGalleryListCard extends LitElement {
           ? html`<img class="thumb" src=${listed.thumbnailUrl} alt="" />`
           : html`<div class="thumb placeholder" aria-hidden="true">▶</div>`}
         ${this._showTitle
-          ? html`<span class="row-title">${listed.item.title}</span>`
+          ? html`<span class="row-title">${listed.displayTitle}</span>`
           : nothing}
       </button>
     `;
@@ -346,7 +391,7 @@ class MediaGalleryListCard extends LitElement {
           ? html`<img class="tile-img" src=${listed.thumbnailUrl} alt="" />`
           : html`<div class="tile-img placeholder" aria-hidden="true">▶</div>`}
         ${this._showTitle
-          ? html`<span class="tile-caption">${listed.item.title}</span>`
+          ? html`<span class="tile-caption">${listed.displayTitle}</span>`
           : nothing}
       </button>
     `;
@@ -358,17 +403,32 @@ class MediaGalleryListCard extends LitElement {
     void this._play(listed, this._rotationEnabled ? index : undefined);
   }
 
+  private get _gridRatio(): AspectRatio {
+    return this._config?.grid_aspect_ratio ?? DEFAULT_ASPECT_RATIO;
+  }
+
+  private get _listRatio(): AspectRatio {
+    return this._config?.list_aspect_ratio ?? DEFAULT_ASPECT_RATIO;
+  }
+
   private _renderItems(): TemplateResult {
     if ((this._config?.layout ?? "list") === "grid") {
       const columns = this._config?.columns ?? DEFAULT_COLUMNS;
       return html`
-        <div class="grid" style="grid-template-columns: repeat(${columns}, 1fr)">
+        <div
+          class="grid"
+          style="grid-template-columns: repeat(${columns}, 1fr); --mglc-tile-ar: ${aspectRatioCss(
+            this._gridRatio
+          )}"
+        >
           ${this._items.map((i, idx) => this._renderTile(i, idx))}
         </div>
       `;
     }
     return html`
-      <div class="rows">${this._items.map((i, idx) => this._renderRow(i, idx))}</div>
+      <div class="rows" style="--mglc-thumb-ar: ${aspectRatioCss(this._listRatio)}">
+        ${this._items.map((i, idx) => this._renderRow(i, idx))}
+      </div>
     `;
   }
 
@@ -385,7 +445,12 @@ class MediaGalleryListCard extends LitElement {
           ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
           ${this._playing ? this._renderPlayer(this._playing) : nothing}
           ${this._loading && !this._items.length
-            ? html`<div class="skeletons">
+            ? html`<div
+                class="skeletons"
+                style="--mglc-skel-h: ${Math.round(
+                  96 / aspectRatioNumber(this._listRatio)
+                ) + 8}px"
+              >
                 ${Array.from(
                   { length: this._config.max_items ?? DEFAULT_MAX_ITEMS },
                   () => html`<div class="skeleton"></div>`
@@ -439,7 +504,8 @@ class MediaGalleryListCard extends LitElement {
     }
     .thumb {
       width: 96px;
-      height: 54px;
+      aspect-ratio: var(--mglc-thumb-ar, 16 / 9);
+      height: auto;
       flex-shrink: 0;
       border-radius: 6px;
       object-fit: cover;
@@ -469,7 +535,7 @@ class MediaGalleryListCard extends LitElement {
       overflow: hidden;
       cursor: pointer;
       background: var(--secondary-background-color);
-      aspect-ratio: 16 / 9;
+      aspect-ratio: var(--mglc-tile-ar, 16 / 9);
       font: inherit;
     }
     .tile-img {
@@ -553,6 +619,22 @@ class MediaGalleryListCard extends LitElement {
       background: black;
       display: block;
     }
+    .player-frame.fixed {
+      position: relative;
+      width: 100%;
+      border-radius: 8px;
+      overflow: hidden;
+      background: black;
+    }
+    .player-frame.fixed video,
+    .player-frame.fixed ha-hls-player {
+      position: absolute;
+      inset: 0;
+      height: 100%;
+      max-height: none;
+      object-fit: cover;
+      border-radius: 0;
+    }
     .empty,
     .error {
       padding: 16px 4px;
@@ -567,7 +649,7 @@ class MediaGalleryListCard extends LitElement {
       gap: 8px;
     }
     .skeleton {
-      height: 62px;
+      height: var(--mglc-skel-h, 62px);
       border-radius: 8px;
       background: var(--secondary-background-color);
       opacity: 0.6;
